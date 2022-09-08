@@ -1,2 +1,2 @@
-# docker-android
-Android Emulator on Docker Image
+# appium-android-maven
+Docker Test: appium, android emulator and maven

@@ -1,63 +1,46 @@
-FROM ubuntu:18.04
+FROM maven:3.6.2-jdk-8
 
-MAINTAINER Anton Malinskiy "anton@malinskiy.com"
+ENV UDIDS=""
+#=====================
+# Install android sdk
+#=====================
+ARG ANDROID_SDK_VERSION=4333796
+ENV ANDROID_SDK_VERSION=$ANDROID_SDK_VERSION
+ARG ANDROID_PLATFORM="android-25"
+ARG BUILD_TOOLS="26.0.0"
+ENV ANDROID_PLATFORM=$ANDROID_PLATFORM
+ENV BUILD_TOOLS=$BUILD_TOOLS
+# install adk
+RUN mkdir -p /opt/adk \
+    && wget -q https://dl.google.com/android/repository/sdk-tools-linux-${ANDROID_SDK_VERSION}.zip \
+    && unzip sdk-tools-linux-${ANDROID_SDK_VERSION}.zip -d /opt/adk \
+    && rm sdk-tools-linux-${ANDROID_SDK_VERSION}.zip \
+    && wget -q https://dl.google.com/android/repository/platform-tools-latest-linux.zip \
+    && unzip platform-tools-latest-linux.zip -d /opt/adk \
+    && rm platform-tools-latest-linux.zip \
+    && yes | /opt/adk/tools/bin/sdkmanager --licenses \
+    && /opt/adk/tools/bin/sdkmanager "emulator" "build-tools;${BUILD_TOOLS}" "platforms;${ANDROID_PLATFORM}" "system-images;${ANDROID_PLATFORM};google_apis;armeabi-v7a" \
+    && echo no | /opt/adk/tools/bin/avdmanager create avd -n "Android" -k "system-images;${ANDROID_PLATFORM};google_apis;armeabi-v7a" \
+    && mkdir -p ${HOME}/.android/ \
+    && ln -s /root/.android/avd ${HOME}/.android/avd \
+    && ln -s /opt/adk/tools/emulator /usr/bin \
+    && ln -s /opt/adk/platform-tools/adb /usr/bin
+ENV ANDROID_HOME /opt/adk
 
-# Set up insecure default key
-COPY adbkey adbkey.pub adb_usb.ini /root/.android/
-
-ENV LINK_ANDROID_SDK=https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip \
-    LANG=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    LC_ALL=en_US.UTF-8 \
-    ANDROID_HOME=/opt/android-sdk-linux \
-    PATH="$PATH:/opt/android-sdk-linux/tools:/opt/android-sdk-linux/platform-tools:/opt/android-sdk-linux/tools/bin:/opt/android-sdk-linux/emulator"
-
-RUN dpkg --add-architecture i386 && \
-    echo "deb mirror://mirrors.ubuntu.com/mirrors.txt bionic main restricted universe multiverse" > /etc/apt/sources.list && \
-    echo "deb mirror://mirrors.ubuntu.com/mirrors.txt bionic-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb mirror://mirrors.ubuntu.com/mirrors.txt bionic-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb mirror://mirrors.ubuntu.com/mirrors.txt bionic-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -yq software-properties-common libstdc++6:i386 zlib1g:i386 libncurses5:i386 \
-                        locales ca-certificates apt-transport-https curl unzip redir iproute2 \
-                        openjdk-8-jdk xvfb x11vnc fluxbox nano libpulse0 telnet expect\
-                        --no-install-recommends && \
-    locale-gen en_US.UTF-8 && \
-    # Install Android SDK
-    curl -L $LINK_ANDROID_SDK > /tmp/android-sdk-linux.zip && \
-    unzip -q /tmp/android-sdk-linux.zip -d /opt/android-sdk-linux/ && \
-    rm /tmp/android-sdk-linux.zip && \
-    # Customized steps per specific platform
-    yes | sdkmanager --no_https --licenses && \
-    yes | sdkmanager emulator tools platform-tools "platforms;{{ platform }}" "system-images;{{ platform }};google_apis;x86" --verbose | uniq && \
-    echo no | avdmanager create avd -n "x86" --package "system-images;{{ platform }};google_apis;x86" --tag google_apis && \
-    # Unfilter devices (now local because CI downloads from github are unstable)
-    # curl -o /root/.android/adb_usb.ini https://raw.githubusercontent.com/apkudo/adbusbini/master/adb_usb.ini && \
-    DEBIAN_FRONTEND=noninteractive apt-get purge -yq unzip openjdk-8-jdk && \
-    # Convert large partitions to qcow2 to save space
-    qemu-img convert -O qcow2 -c /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/system.img /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/system.qcow2 && \
-    mv /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/system.qcow2 /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/system.img && \
-    qemu-img convert -O qcow2 -c /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/userdata.img /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/userdata.qcow2 && \
-    mv /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/userdata.qcow2 /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/userdata.img && \
-    qemu-img resize /root/.android/avd/x86.avd/userdata.img 2G && \
-    e2fsck -fy /root/.android/avd/x86.avd/userdata.img && \
-    resize2fs /root/.android/avd/x86.avd/userdata.img && \
-    qemu-img convert -O qcow2 -c /root/.android/avd/x86.avd/userdata.img /root/.android/avd/x86.avd/userdata.qcow2 && \
-    mv /root/.android/avd/x86.avd/userdata.qcow2 /root/.android/avd/x86.avd/userdata.img && \
-    (qemu-img convert -O qcow2 -c /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/vendor.img /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/vendor.qcow2 && \
-    mv /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/vendor.qcow2 /opt/android-sdk-linux/system-images/{{ platform }}/google_apis/x86/vendor.img || true) && \
-    # Clean up
-    apt-get -yq autoremove && \
-    apt-get clean && \
-    apt-get autoclean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-COPY config.ini /root/.android/avd/x86.avd/config.ini
-
-# Expose adb
-EXPOSE 5037 5554 5555 5900
-
-# Add script
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-CMD ["/start.sh"]
+#====================================
+# Install latest nodejs, npm, appium
+#====================================
+ARG NODE_VERSION=v8.11.3
+ENV NODE_VERSION=$NODE_VERSION
+ARG APPIUM_VERSION=1.9.1
+ENV APPIUM_VERSION=$APPIUM_VERSION
+# install appium
+RUN wget -q https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz \
+    && tar -xJf node-${NODE_VERSION}-linux-x64.tar.xz -C /opt/ \
+    && ln -s /opt/node-${NODE_VERSION}-linux-x64/bin/npm /usr/bin/ \
+    && ln -s /opt/node-${NODE_VERSION}-linux-x64/bin/node /usr/bin/ \
+    && ln -s /opt/node-${NODE_VERSION}-linux-x64/bin/npx /usr/bin/ \
+    && npm install -g appium@${APPIUM_VERSION} --allow-root --unsafe-perm=true \
+    && ln -s /opt/node-${NODE_VERSION}-linux-x64/bin/appium /usr/bin/
+EXPOSE 4723 2251 5555
+CMD ["docker-entrypoint.sh"]
